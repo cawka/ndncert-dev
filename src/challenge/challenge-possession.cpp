@@ -26,6 +26,8 @@
 #include <ndn-cxx/util/random.hpp>
 
 #include <boost/property_tree/json_parser.hpp>
+#include <boost/process/child.hpp>
+#include <boost/process/io.hpp>
 
 namespace ndncert {
 
@@ -64,17 +66,58 @@ ChallengePossession::parseConfigFile()
     NDN_THROW(std::runtime_error("Error processing configuration file: " + m_configFile + " no data"));
   }
 
-  m_trustAnchors.clear();
-  auto anchorList = config.get_child("anchor-list");
-  auto it = anchorList.begin();
-  for (; it != anchorList.end(); it++) {
-    std::istringstream ss(it->second.get("certificate", ""));
-    auto cert = ndn::io::load<Certificate>(ss);
-    if (cert == nullptr) {
-      NDN_LOG_ERROR("Cannot load the certificate from config file");
-      continue;
-    }
-    m_trustAnchors.push_back(*cert);
+  auto anchorList = config.get_child("anchor-list", boost::property_tree::ptree());
+  auto certValidatorCmd = config.get_child("cert-validator-cmd", boost::property_tree::ptree());
+  size_t countOptions = !anchorList.empty() + !certValidatorCmd.empty();
+  if (countOptions > 1) {
+    NDN_THROW(std::runtime_error("Only one of `anchor-list` or `cert-validator-cmd` can be present in the config file"));
+  }
+
+  if (!anchorList.empty()) {
+      std::list<Certificate> trustAnchors;
+
+      auto it = anchorList.begin();
+      for (; it != anchorList.end(); it++) {
+        std::istringstream ss(it->second.get("certificate", ""));
+        auto cert = ndn::io::load<Certificate>(ss);
+        if (cert == nullptr) {
+          NDN_LOG_ERROR("Cannot load the certificate from config file");
+          continue;
+        }
+        trustAnchors.push_back(*cert);
+      }
+
+      m_validateCertFunc = [trustAnchors] (const ndn::security::Certificate& cert) -> bool {
+          auto keyLocator = cert.getSignatureInfo().getKeyLocator().getName();
+          bool isOk = std::any_of(trustAnchors.begin(), trustAnchors.end(), [&] (const auto& anchor) {
+            return (anchor.getKeyName() == keyLocator || anchor.getName() == keyLocator) &&
+                   ndn::security::verifySignature(cert, anchor);
+            });
+          return isOk;
+        };
+  }
+  else if (!certValidatorCmd.empty()) {
+    m_validateCertFunc = [certValidatorCmd] (const ndn::security::Certificate& cert) -> bool {
+
+      std::string command = certValidatorCmd.get_value<std::string>();
+
+      boost::process::opstream in;
+      boost::process::ipstream debug;
+
+      boost::process::child child(command, boost::process::std_in < in, boost::process::std_out > debug);
+      in << cert.wireEncode();
+      in.close();
+
+      std::string line;
+      while (child.running() && std::getline(debug, line)) {
+        NDN_LOG_TRACE("Validate func `" << command << "`: " << line);
+      }
+
+      child.wait();
+      return child.exit_code() == 0;
+    };
+  } else {
+    NDN_THROW(std::runtime_error("`anchor-list` or `cert-validator-cmd` must be present in the config file"));
   }
 }
 
@@ -83,9 +126,10 @@ std::tuple<ErrorCode, std::string>
 ChallengePossession::handleChallengeRequest(const Block& params, ca::RequestState& request)
 {
   params.parse();
-  if (m_trustAnchors.empty()) {
+  if (!m_validateCertFunc) {
     parseConfigFile();
   }
+
   Certificate credential;
   const uint8_t* signature = nullptr;
   size_t signatureLen = 0;
@@ -118,14 +162,7 @@ ChallengePossession::handleChallengeRequest(const Block& params, ca::RequestStat
     if (!credential.hasContent() || signatureLen != 0) {
       return returnWithError(request, ErrorCode::BAD_INTEREST_FORMAT, "Cannot find certificate");
     }
-    auto keyLocator = credential.getSignatureInfo().getKeyLocator().getName();
-    ndn::security::transform::PublicKey key;
-    key.loadPkcs8(credential.getPublicKey());
-    bool checkOK = std::any_of(m_trustAnchors.begin(), m_trustAnchors.end(), [&] (const auto& anchor) {
-      return (anchor.getKeyName() == keyLocator || anchor.getName() == keyLocator) &&
-             ndn::security::verifySignature(credential, anchor);
-    });
-    if (!checkOK) {
+    if (!m_validateCertFunc(credential)) {
       return returnWithError(request, ErrorCode::INVALID_PARAMETER, "Certificate cannot be verified");
     }
 
@@ -226,25 +263,25 @@ ChallengePossession::genChallengeRequestTLV(Status status, const std::string& ch
   return request;
 }
 
-void
-ChallengePossession::fulfillParameters(std::multimap<std::string, std::string>& params,
-                                       ndn::KeyChain& keyChain, const Name& issuedCertName,
-                                       ndn::span<const uint8_t, 16> nonce)
-{
-  auto keyName = ndn::security::extractKeyNameFromCertName(issuedCertName);
-  auto id = keyChain.getPib().getIdentity(ndn::security::extractIdentityFromCertName(issuedCertName));
-  auto issuedCert = id.getKey(keyName).getCertificate(issuedCertName);
-  const auto& issuedCertTlv = issuedCert.wireEncode();
-  auto signature = keyChain.getTpm().sign({nonce}, keyName, ndn::DigestAlgorithm::SHA256);
+//void
+//ChallengePossession::fulfillParameters(std::multimap<std::string, std::string>& params,
+//                                       ndn::KeyChain& keyChain, const Name& issuedCertName,
+//                                       ndn::span<const uint8_t, 16> nonce)
+//{
+//  auto keyName = ndn::security::extractKeyNameFromCertName(issuedCertName);
+//  auto id = keyChain.getPib().getIdentity(ndn::security::extractIdentityFromCertName(issuedCertName));
+//  auto issuedCert = id.getKey(keyName).getCertificate(issuedCertName);
+//  const auto& issuedCertTlv = issuedCert.wireEncode();
+//  auto signature = keyChain.getTpm().sign({nonce}, keyName, ndn::DigestAlgorithm::SHA256);
 
-  for (auto& [key, val] : params) {
-    if (key == PARAMETER_KEY_CREDENTIAL_CERT) {
-      val = std::string(reinterpret_cast<const char*>(issuedCertTlv.wire()), issuedCertTlv.size());
-    }
-    else if (key == PARAMETER_KEY_PROOF) {
-      val = std::string(signature->get<char>(), signature->size());
-    }
-  }
-}
+//  for (auto& [key, val] : params) {
+//    if (key == PARAMETER_KEY_CREDENTIAL_CERT) {
+//      val = std::string(reinterpret_cast<const char*>(issuedCertTlv.wire()), issuedCertTlv.size());
+//    }
+//    else if (key == PARAMETER_KEY_PROOF) {
+//      val = std::string(signature->get<char>(), signature->size());
+//    }
+//  }
+//}
 
 } // namespace ndncert
