@@ -10,6 +10,12 @@ def build(bld):
         use='ndn-cert')
 
     bld.program(
+        name='ndncert-cl',
+        target='../bin/ndncert-cl',
+        source='ndncert-cl.cpp',
+        use='ndn-cert')
+
+    bld.program(
         name='ndncert-ca-server',
         target='../bin/ndncert-ca-server',
         source='ndncert-ca-server.cpp',
