@@ -62,7 +62,7 @@ private:
   {
     m_face.expressInterest(
       *Request::genCaProfileDiscoveryInterest(caPrefix),
-      [&] (const auto&, const auto& data) {
+      [this, fullCertName] (const auto&, const auto& data) {
         auto fetchingInterest = Request::genCaProfileInterestFromDiscoveryResponse(data);
         m_face.expressInterest(*fetchingInterest,
                               [this, fullCertName] (const auto&, const auto& data2) { infoCb(data2, fullCertName); },
