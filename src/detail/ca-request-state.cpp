@@ -26,22 +26,30 @@
 
 namespace ndncert {
 
-std::string statusToString(Status status)
+std::ostream&
+operator<<(std::ostream& os, const Status& status)
 {
   switch (status) {
   case Status::BEFORE_CHALLENGE:
-    return "Before challenge";
+    os << "Before challenge";
+    break;
   case Status::CHALLENGE:
-    return "In challenge";
+    os << "In challenge";
+    break;
   case Status::PENDING:
-    return "Pending after challenge";
+    os << "Pending after challenge";
+    break;
   case Status::SUCCESS:
-    return "Success";
+    os << "Success";
+    break;
   case Status::FAILURE:
-    return "Failure";
+    os << "Failure";
+    break;
   default:
-    return "Unrecognized status";
+    os << "Unrecognized status";
+    break;
   }
+  return os;
 }
 
 Status
@@ -72,7 +80,7 @@ operator<<(std::ostream& os, const RequestState& request)
 {
   os << "Request's CA name: " << request.caPrefix << "\n";
   os << "Request's request ID: " << ndn::toHex(request.requestId) << "\n";
-  os << "Request's status: " << statusToString(request.status) << "\n";
+  os << "Request's status: " << request.status << "\n";
   os << "Request's challenge type: " << request.challengeType << "\n";
   if (request.challengeState) {
     os << "Challenge Status: " << request.challengeState->challengeStatus << "\n";

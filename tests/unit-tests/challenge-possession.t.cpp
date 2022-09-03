@@ -89,7 +89,7 @@ namespace ndncert::tests {
 
 //BOOST_AUTO_TEST_CASE(LoadConfig)
 //{
-//  BOOST_CHECK_EQUAL(challenge.CHALLENGE_TYPE, "Possession");
+//  BOOST_CHECK_EQUAL(challenge.CHALLENGE_TYPE, "possession");
 
 //  challenge.parseConfigFile();
 //  BOOST_CHECK_EQUAL(challenge.m_trustAnchors.size(), 1);

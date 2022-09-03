@@ -40,7 +40,7 @@ const std::string ChallengePossession::PARAMETER_KEY_PROOF = "proof";
 const std::string ChallengePossession::NEED_PROOF = "need-proof";
 
 ChallengePossession::ChallengePossession(const std::string& configPath)
-    : ChallengeModule("Possession", 1, time::seconds(60))
+  : ChallengeModule("possession", 1, time::seconds(60))
 {
   if (configPath.empty()) {
     m_configFile = std::string(NDNCERT_SYSCONFDIR) + "/ndncert/challenge-credential.conf";
@@ -231,8 +231,14 @@ ChallengePossession::genChallengeRequestTLV(Status status, const std::string& ch
         request.push_back(ndn::makeStringBlock(tlv::ParameterKey, PARAMETER_KEY_CREDENTIAL_CERT));
         Block valueBlock(tlv::ParameterValue);
         auto& certTlvStr = std::get<1>(item);
-        valueBlock.push_back(Block(ndn::make_span(reinterpret_cast<const uint8_t*>(certTlvStr.data()),
-                                                  certTlvStr.size())));
+        try {
+          valueBlock.push_back(Block(ndn::make_span(reinterpret_cast<const uint8_t*>(certTlvStr.data()),
+                                                    certTlvStr.size())));
+        }
+        catch (const ndn::Block::Error& e) {
+          NDN_THROW(std::runtime_error("Wrong parameter value provided for `" + std::get<0>(item) + "` (" + e.what() + ")"));
+        }
+
         request.push_back(valueBlock);
       }
       else {
@@ -263,25 +269,25 @@ ChallengePossession::genChallengeRequestTLV(Status status, const std::string& ch
   return request;
 }
 
-//void
-//ChallengePossession::fulfillParameters(std::multimap<std::string, std::string>& params,
-//                                       ndn::KeyChain& keyChain, const Name& issuedCertName,
-//                                       ndn::span<const uint8_t, 16> nonce)
-//{
-//  auto keyName = ndn::security::extractKeyNameFromCertName(issuedCertName);
-//  auto id = keyChain.getPib().getIdentity(ndn::security::extractIdentityFromCertName(issuedCertName));
-//  auto issuedCert = id.getKey(keyName).getCertificate(issuedCertName);
-//  const auto& issuedCertTlv = issuedCert.wireEncode();
-//  auto signature = keyChain.getTpm().sign({nonce}, keyName, ndn::DigestAlgorithm::SHA256);
+void
+ChallengePossession::fulfillParameters(std::multimap<std::string, std::string>& params,
+                                       ndn::KeyChain& keyChain, const Name& issuedCertName,
+                                       ndn::span<const uint8_t, 16> nonce)
+{
+  auto keyName = ndn::security::extractKeyNameFromCertName(issuedCertName);
+  auto id = keyChain.getPib().getIdentity(ndn::security::extractIdentityFromCertName(issuedCertName));
+  auto issuedCert = id.getKey(keyName).getCertificate(issuedCertName);
+  const auto& issuedCertTlv = issuedCert.wireEncode();
+  auto signature = keyChain.getTpm().sign({nonce}, keyName, ndn::DigestAlgorithm::SHA256);
 
-//  for (auto& [key, val] : params) {
-//    if (key == PARAMETER_KEY_CREDENTIAL_CERT) {
-//      val = std::string(reinterpret_cast<const char*>(issuedCertTlv.wire()), issuedCertTlv.size());
-//    }
-//    else if (key == PARAMETER_KEY_PROOF) {
-//      val = std::string(signature->get<char>(), signature->size());
-//    }
-//  }
-//}
+  for (auto& [key, val] : params) {
+    if (key == PARAMETER_KEY_CREDENTIAL_CERT) {
+      val = std::string(reinterpret_cast<const char*>(issuedCertTlv.wire()), issuedCertTlv.size());
+    }
+    else if (key == PARAMETER_KEY_PROOF) {
+      val = std::string(signature->get<char>(), signature->size());
+    }
+  }
+}
 
 } // namespace ndncert

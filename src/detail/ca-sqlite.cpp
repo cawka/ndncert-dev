@@ -30,6 +30,8 @@
 
 namespace ndncert::ca {
 
+NDN_LOG_INIT(ndncert.ca.sqlite);
+
 using ndn::util::Sqlite3Statement;
 
 const std::string CaSqlite::STORAGE_TYPE = "ca-storage-sqlite3";
@@ -117,11 +119,14 @@ CaSqlite::CaSqlite(const Name& caName, const std::string& path)
     sqlite3_free(errorMessage);
     NDN_THROW(std::runtime_error("CaSqlite DB cannot be initialized"));
   }
+
+  NDN_LOG_TRACE("Opened sqlite database in " << dbDir.c_str());
 }
 
 CaSqlite::~CaSqlite()
 {
   sqlite3_close(m_database);
+  NDN_LOG_TRACE("Closing databse");
 }
 
 RequestState
@@ -165,26 +170,27 @@ CaSqlite::addRequest(const RequestState& request)
 {
   Sqlite3Statement statement(
       m_database,
-      R"_SQLTEXT_(INSERT OR ABORT INTO RequestStates (request_id, ca_name, status, request_type,
-                  cert_request, challenge_type, challenge_status, challenge_secrets,
-                  challenge_tp, remaining_tries, remaining_time, encryption_key, encryption_iv, decryption_iv)
-                  values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?))_SQLTEXT_");
+      "INSERT INTO RequestStates (request_id) VALUES(?)");
+//      R"_SQLTEXT_(INSERT OR ABORT INTO RequestStates (request_id, ca_name, status, request_type,
+//                  cert_request, challenge_type, challenge_status, challenge_secrets,
+//                  challenge_tp, remaining_tries, remaining_time, encryption_key, encryption_iv, decryption_iv)
+//                  values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?))_SQLTEXT_");
   statement.bind(1, request.requestId.data(), request.requestId.size(), SQLITE_TRANSIENT);
-  statement.bind(2, request.caPrefix.wireEncode(), SQLITE_TRANSIENT);
-  statement.bind(3, static_cast<int>(request.status));
-  statement.bind(4, static_cast<int>(request.requestType));
-  statement.bind(5, request.cert.wireEncode(), SQLITE_TRANSIENT);
-  statement.bind(12, request.encryptionKey.data(), request.encryptionKey.size(), SQLITE_TRANSIENT);
-  statement.bind(13, request.encryptionIv.data(), request.encryptionIv.size(), SQLITE_TRANSIENT);
-  statement.bind(14, request.decryptionIv.data(), request.decryptionIv.size(), SQLITE_TRANSIENT);
-  if (request.challengeState) {
-    statement.bind(6, request.challengeType, SQLITE_TRANSIENT);
-    statement.bind(7, request.challengeState->challengeStatus, SQLITE_TRANSIENT);
-    statement.bind(8, convertJson2String(request.challengeState->secrets), SQLITE_TRANSIENT);
-    statement.bind(9, time::toIsoString(request.challengeState->timestamp), SQLITE_TRANSIENT);
-    statement.bind(10, request.challengeState->remainingTries);
-    statement.bind(11, request.challengeState->remainingTime.count());
-  }
+//  statement.bind(2, request.caPrefix.wireEncode(), SQLITE_TRANSIENT);
+//  statement.bind(3, static_cast<int>(request.status));
+//  statement.bind(4, static_cast<int>(request.requestType));
+//  statement.bind(5, request.cert.wireEncode(), SQLITE_TRANSIENT);
+//  statement.bind(12, request.encryptionKey.data(), request.encryptionKey.size(), SQLITE_TRANSIENT);
+//  statement.bind(13, request.encryptionIv.data(), request.encryptionIv.size(), SQLITE_TRANSIENT);
+//  statement.bind(14, request.decryptionIv.data(), request.decryptionIv.size(), SQLITE_TRANSIENT);
+//  if (request.challengeState) {
+//    statement.bind(6, request.challengeType, SQLITE_TRANSIENT);
+//    statement.bind(7, request.challengeState->challengeStatus, SQLITE_TRANSIENT);
+//    statement.bind(8, convertJson2String(request.challengeState->secrets), SQLITE_TRANSIENT);
+//    statement.bind(9, time::toIsoString(request.challengeState->timestamp), SQLITE_TRANSIENT);
+//    statement.bind(10, request.challengeState->remainingTries);
+//    statement.bind(11, request.challengeState->remainingTime.count());
+//  }
   if (statement.step() != SQLITE_DONE) {
     NDN_THROW(std::runtime_error("Request " + ndn::toHex(request.requestId) +
                                  " cannot be added to the database"));

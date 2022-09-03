@@ -66,10 +66,10 @@ public:
   genChallengeRequestTLV(Status status, const std::string& challengeStatus,
                          const std::multimap<std::string, std::string>& params) override;
 
-//  static void
-//  fulfillParameters(std::multimap<std::string, std::string>& params,
-//                    ndn::KeyChain& keyChain, const Name& issuedCertName,
-//                    ndn::span<const uint8_t, 16> nonce);
+  static void
+  fulfillParameters(std::multimap<std::string, std::string>& params,
+                    ndn::KeyChain& keyChain, const Name& issuedCertName,
+                    ndn::span<const uint8_t, 16> nonce);
 
   // challenge parameters
   static const std::string PARAMETER_KEY_CREDENTIAL_CERT;

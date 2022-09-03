@@ -35,6 +35,8 @@
 #include <ndn-cxx/util/random.hpp>
 #include <ndn-cxx/util/string-helper.hpp>
 
+#include <boost/lexical_cast.hpp>
+
 namespace ndncert::ca {
 
 const time::seconds DEFAULT_DATA_FRESHNESS_PERIOD = 1_s;
@@ -286,9 +288,16 @@ CaModule::onNewRenewRevoke(const Interest& request, RequestType requestType)
     if (notBefore < currentTime - REQUEST_VALIDITY_PERIOD_NOT_BEFORE_GRACE_PERIOD ||
         notAfter > currentTime + m_config.caProfile.maxValidityPeriod ||
         notAfter <= notBefore) {
-      NDN_LOG_ERROR("An invalid validity period is being requested.");
+      NDN_LOG_TRACE("Configured max: " << m_config.caProfile.maxValidityPeriod);
+      NDN_LOG_ERROR("An invalid validity period is being requested (" << toIsoString(notBefore) << " ~ " << toIsoString(notAfter)
+                    << " vs. " << toIsoString(currentTime - REQUEST_VALIDITY_PERIOD_NOT_BEFORE_GRACE_PERIOD) << " ~ "
+                    << toIsoString(currentTime + m_config.caProfile.maxValidityPeriod) << ")");
       m_face.put(generateErrorDataPacket(request.getName(), ErrorCode::BAD_VALIDITY_PERIOD,
-                                         "An invalid validity period is being requested."));
+                                         "An invalid validity period is being requested (" +
+                                         toIsoString(notBefore) + " ~ " +
+                                         toIsoString(notAfter) + " vs. " +
+                                         toIsoString(currentTime - REQUEST_VALIDITY_PERIOD_NOT_BEFORE_GRACE_PERIOD) + " ~ " +
+                                         toIsoString(currentTime + m_config.caProfile.maxValidityPeriod) + ")"));
       return;
     }
 

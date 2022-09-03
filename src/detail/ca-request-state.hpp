@@ -40,8 +40,8 @@ enum class Status : uint16_t {
 /**
  * @brief Convert request status to string.
  */
-std::string
-statusToString(Status status);
+std::ostream&
+operator<<(std::ostream& os, const Status& status);
 
 /**
  * @brief Convert request status to string.

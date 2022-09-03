@@ -121,7 +121,7 @@ main(int argc, char* argv[])
     return 0;
   }
 
-  CaModule ca(face, keyChain, configFilePath);
+  CaModule ca(face, keyChain, configFilePath, "ca-storage-memory");
   std::deque<Data> cachedCertificates;
   auto profileData = ca.getCaProfileData();
 

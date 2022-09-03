@@ -28,17 +28,23 @@
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
+#include <boost/range/adaptor/map.hpp>
 
 #include <iostream>
 
 namespace ndncert::requester {
 
+NDN_LOG_INIT(ndncert.cl);
+
 class Client
 {
 public:
-  Client(ndn::Name identity, std::vector<std::string> params)
+  Client(ndn::Name identity, std::vector<std::string> probeParams,
+         std::string challenge, std::vector<std::string> challengeParams)
     : m_identity(std::move(identity))
-    , m_params(std::move(params))
+    , m_probeParams(std::move(probeParams))
+    , m_challenge(std::move(challenge))
+    , m_challengeParams(std::move(challengeParams))
     , m_systemSignals(m_face.getIoService())
   {
   }
@@ -60,6 +66,8 @@ private:
   void
   runDiscovery(const ndn::Name& caPrefix, const ndn::Name& fullCertName)
   {
+    NDN_LOG_DEBUG("Run discovery for " << caPrefix);
+
     m_face.expressInterest(
       *Request::genCaProfileDiscoveryInterest(caPrefix),
       [this, fullCertName] (const auto&, const auto& data) {
@@ -98,28 +106,33 @@ private:
       runNew(profile, m_identity);
     }
     else {
-      // use probe and parameters to check name to request
-//      NDN_THROW(std::runtime_error("PROBE request not implemented yet"));
-
-      if (profile.probeParameterKeys.size() != m_params.size()) {
-        NDN_THROW(std::runtime_error("The number of PROBE parameters required by CA (" +
-                                     std::to_string(profile.probeParameterKeys.size())
-                                     + ") doesn't match the number of provided parmeters (" +
-                                     std::to_string(m_params.size()) + ")"));
-      }
-
-      auto keyIt = profile.probeParameterKeys.begin();
-      auto valueIt = m_params.begin();
-      std::multimap<std::string, std::string> params;
-      for (; keyIt != profile.probeParameterKeys.end() && valueIt != m_params.end(); ++keyIt, ++valueIt) {
-        params.emplace(*keyIt, *valueIt);
-      }
-
-      m_face.expressInterest(*Request::genProbeInterest(profile, std::move(params)),
-                            [this, profile] (const auto&, const auto& data) { probeCb(data, profile); },
-                            [this] (auto&&...) { onNackCb(); },
-                            [this] (auto&&...) { timeoutCb(); });
+      runProbe(profile);
     }
+  }
+
+  void
+  runProbe(const CaProfile& profile)
+  {
+    if (profile.probeParameterKeys.size() != m_probeParams.size()) {
+      NDN_THROW(std::runtime_error("The number of PROBE parameters required by CA (" +
+                                   std::to_string(profile.probeParameterKeys.size())
+                                   + ") doesn't match the number of provided parmeters (" +
+                                   std::to_string(m_probeParams.size()) + ")"));
+    }
+
+    auto keyIt = profile.probeParameterKeys.begin();
+    auto valueIt = m_probeParams.begin();
+    std::multimap<std::string, std::string> params;
+    for (; keyIt != profile.probeParameterKeys.end() && valueIt != m_probeParams.end(); ++keyIt, ++valueIt) {
+      params.emplace(*keyIt, *valueIt);
+    }
+
+    NDN_LOG_DEBUG("Run PROBE with [" << boost::algorithm::join(profile.probeParameterKeys, ", ") << "] parameters");
+
+    m_face.expressInterest(*Request::genProbeInterest(profile, std::move(params)),
+                          [this, profile] (const auto&, const auto& data) { probeCb(data, profile); },
+                          [this] (auto&&...) { onNackCb(); },
+                          [this] (auto&&...) { timeoutCb(); });
   }
 
   void
@@ -166,8 +179,11 @@ private:
     }
 
     key = identity.getDefaultKey();
+    NDN_LOG_DEBUG(">> NEW for " << key.getName());
+
+    m_requesterState = std::make_shared<Request>(m_keyChain, profile, RequestType::NEW);
     auto interest = m_requesterState->genNewInterest(key.getName(),
-                                                     time::system_clock::now(), time::system_clock::now() + 180_days);
+                                                     time::system_clock::now(), time::system_clock::now() + 60_days);
     if (interest != nullptr) {
       m_face.expressInterest(*interest,
                            [this] (const auto&, const auto& data) { newCb(data); },
@@ -189,7 +205,18 @@ private:
       NDN_THROW(std::runtime_error("There is no available challenge provided by the CA"));
     }
 
-    runChallenge(challengeList.front());
+    if (m_challenge.empty()) {
+      runChallenge(challengeList.front());
+    }
+    else {
+      if (std::find(challengeList.begin(), challengeList.end(), m_challenge) != challengeList.end()) {
+        runChallenge(m_challenge);
+      }
+      else {
+        NDN_THROW(std::runtime_error("Challenge " + m_challenge + " not supported by the CA "
+                                     "(advertized: " + boost::algorithm::join(challengeList, ", ") + ")"));
+      }
+    }
   }
 
   void
@@ -197,11 +224,39 @@ private:
   {
     auto requirements = m_requesterState->selectOrContinueChallenge(challengeType);
 
+    NDN_LOG_DEBUG("(Re-)run CHALLENGE " << challengeType << " with " << requirements.size()
+                  << " requirements, current status: " << m_requesterState->m_status);
+    for (const auto& req : requirements) {
+      NDN_LOG_DEBUG("  - " << std::get<0>(req) << " (" << std::get<1>(req) << ")");
+    }
+
     if (!requirements.empty()) {
       if (m_requesterState->m_status == Status::BEFORE_CHALLENGE) {
-//        requirements.find(challengeType)->second = capturedProbeParams->find(defaultChallenge)->second;
+
+        if (requirements.size() != m_challengeParams.size()) {
+          NDN_THROW(std::runtime_error("The number of challenge parameters required by CA doesn't match the number of provided parameters"));
+        }
+
+        auto keyIt = requirements.begin();
+        auto valueIt = m_challengeParams.begin();
+        for (; keyIt != requirements.end() && valueIt != m_challengeParams.end(); ++keyIt, ++valueIt) {
+          // for known challenges, process semantically. For rest, just include the string value
+
+          if (std::get<0>(*keyIt) == "issued-cert") {
+            auto certName = *valueIt;
+            auto idName = ndn::security::extractIdentityFromCertName(certName);
+            auto keyName = ndn::security::extractKeyNameFromCertName(certName);
+            Certificate cert = m_keyChain.getPib().getIdentity(idName).getKey(keyName).getCertificate(certName);
+
+            std::get<1>(*keyIt) = std::string(reinterpret_cast<const char*>(cert.wireEncode().data()), cert.wireEncode().size());
+          }
+          else {
+            std::get<1>(*keyIt) = *valueIt;
+          }
+        }
       }
     }
+
     m_face.expressInterest(*m_requesterState->genChallengeInterest(std::move(requirements)),
                            [this] (const auto&, const auto& data) { challengeCb(data); },
                            [this] (auto&&...) { onNackCb(); },
@@ -214,7 +269,7 @@ private:
     m_requesterState->onChallengeResponse(reply);
 
     if (m_requesterState->m_status == Status::SUCCESS) {
-//      std::cerr << "Certificate has already been issued, downloading certificate..." << std::endl;
+      NDN_LOG_DEBUG("Certificate has already been issued, download certificate");
       m_face.expressInterest(*m_requesterState->genCertFetchInterest(),
                              [this] (const auto&, const auto& data) { certFetchCb(data); },
                              [this] (auto&&...) { onNackCb(); },
@@ -261,7 +316,9 @@ private:
 
 private:
   ndn::Name m_identity;
-  std::vector<std::string> m_params;
+  std::vector<std::string> m_probeParams;
+  std::string m_challenge;
+  std::vector<std::string> m_challengeParams;
 
   ndn::KeyChain m_keyChain;
   ndn::Face m_face{nullptr, m_keyChain};
@@ -277,18 +334,21 @@ private:
 static int
 main(int argc, char* argv[])
 {
-
   namespace po = boost::program_options;
   std::string configFilePath = std::string(NDNCERT_SYSCONFDIR) + "/ndncert/client.conf";
-  std::vector<std::string> params;
+  std::vector<std::string> probeParams;
+  std::string challenge;
+  std::vector<std::string> challengeParams;
   ndn::Name identity;
 
   po::options_description description("Usage: ndncert-client [-h] [-c FILE]\n");
   description.add_options()
     ("help,h", "produce help message")
-    ("identity,i", po::value<ndn::Name>(&identity), "identity for the certificate (depends on CA profile)")
     ("config-file,c", po::value<std::string>(&configFilePath), "configuration file of CA profile (must contain exactly one profile)")
-    ("param,p", po::value<std::vector<std::string>>(&params), "one or multiple parameters to determine identity name (in order selected CA expects them)")
+    ("identity,i", po::value<ndn::Name>(&identity), "identity for the certificate (depends on CA profile)")
+    ("probe-param,p", po::value<std::vector<std::string>>(&probeParams), "one or multiple parameters to determine identity name (in order selected CA expects them)")
+    ("challenge", po::value<std::string>(&challenge), "Use the specified challenge (if not specified, the first offered challege will be used)")
+    ("challenge-param,C", po::value<std::vector<std::string>>(&challengeParams), "one or multiple challenge-specific parameters")
     ;
   po::positional_options_description p;
   p.add("param", -1);
@@ -303,13 +363,13 @@ main(int argc, char* argv[])
     return 1;
   }
 
-  if (!params.empty() && !identity.empty()) {
+  if (!probeParams.empty() && !identity.empty()) {
     std::cerr << "ERROR: only either identity name or parameters can be specified\n" << std::endl;
     std::cerr << description << std::endl;
     return 1;
   }
 
-  if (params.empty() && identity.empty()) {
+  if (probeParams.empty() && identity.empty()) {
     std::cerr << "ERROR: at least identity name or parameters must be specified\n" << std::endl;
     std::cerr << description << std::endl;
     return 1;
@@ -338,7 +398,7 @@ main(int argc, char* argv[])
     exit(1);
   }
 
-  Client client(identity, params);
+  Client client(identity, probeParams, challenge, challengeParams);
 
   try {
     client.run(*ca);
