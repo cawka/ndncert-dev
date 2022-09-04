@@ -82,7 +82,7 @@ public:
   static const std::string NEED_PROOF;
 
 private:
-  std::function<bool(ndn::security::Certificate)> m_validateCertFunc;
+  std::function<bool(const ndn::Name&, const ndn::security::Certificate&)> m_validateCertFunc;
 };
 
 } // namespace ndncert

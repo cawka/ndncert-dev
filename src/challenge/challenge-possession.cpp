@@ -28,6 +28,7 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/process/child.hpp>
 #include <boost/process/io.hpp>
+#include <boost/process/search_path.hpp>
 
 #include <iostream>
 
@@ -72,25 +73,33 @@ ChallengePossession::readConfig(const JsonSection& config)
         trustAnchors.push_back(*cert);
       }
 
-      m_validateCertFunc = [trustAnchors] (const ndn::security::Certificate& cert) -> bool {
-          auto keyLocator = cert.getSignatureInfo().getKeyLocator().getName();
-          bool isOk = std::any_of(trustAnchors.begin(), trustAnchors.end(), [&] (const auto& anchor) {
-            return (anchor.getKeyName() == keyLocator || anchor.getName() == keyLocator) &&
-                   ndn::security::verifySignature(cert, anchor);
-            });
-          return isOk;
-        };
+      m_validateCertFunc = [trustAnchors] (const ndn::Name& identity,
+                                           const ndn::security::Certificate& cert) -> bool {
+
+        // TODO add identity restriction
+
+        auto keyLocator = cert.getSignatureInfo().getKeyLocator().getName();
+        bool isOk = std::any_of(trustAnchors.begin(), trustAnchors.end(), [&] (const auto& anchor) {
+          return (anchor.getKeyName() == keyLocator || anchor.getName() == keyLocator) &&
+                 ndn::security::verifySignature(cert, anchor);
+          });
+        return isOk;
+      };
   }
   else if (!certValidatorCmd.empty()) {
-    m_validateCertFunc = [certValidatorCmd] (const ndn::security::Certificate& cert) -> bool {
+    m_validateCertFunc = [certValidatorCmd] (const ndn::Name& identity,
+                                             const ndn::security::Certificate& cert) -> bool {
       std::string command = certValidatorCmd;
 
-      boost::process::opstream in;
       boost::process::ipstream debug;
 
-      boost::process::child child(command, boost::process::std_in < in, boost::process::std_out > debug);
-      in << cert.wireEncode();
-      in.close();
+      std::ostringstream certStr;
+      ndn::io::save(cert, certStr);
+
+      boost::process::child child(command,
+                                  identity.toUri(),
+                                  certStr.str(),
+                                  boost::process::std_in < boost::process::null, boost::process::std_out > debug);
 
       std::string line;
       while (child.running() && std::getline(debug, line)) {
@@ -148,7 +157,7 @@ ChallengePossession::handleChallengeRequest(const Block& params, ca::RequestStat
       if (!credential.hasContent() || signatureLen != 0) {
         return returnWithError(request, ErrorCode::BAD_INTEREST_FORMAT, "Cannot find certificate");
       }
-      if (!m_validateCertFunc(credential)) {
+      if (!m_validateCertFunc(request.cert.getIdentity(), credential)) {
         return returnWithError(request, ErrorCode::INVALID_PARAMETER, "Certificate cannot be verified");
       }
 
