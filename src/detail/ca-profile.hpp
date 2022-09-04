@@ -34,6 +34,7 @@ const std::string CONFIG_PROBE_PARAMETERS = "probe-parameters";
 const std::string CONFIG_PROBE_PARAMETER = "probe-parameter-key";
 const std::string CONFIG_SUPPORTED_CHALLENGES = "supported-challenges";
 const std::string CONFIG_CHALLENGE = "challenge";
+const std::string CONFIG_CHALLENGE_OPTIONS = "options";
 const std::string CONFIG_CERTIFICATE = "certificate";
 const std::string CONFIG_REDIRECTION = "redirect-to";
 const std::string CONFIG_NAME_ASSIGNMENT = "name-assignment";
@@ -56,6 +57,9 @@ public:
    */
   JsonSection
   toJson() const;
+
+  std::vector<std::string>
+  getSupportedChallengeNames();
 
 public:
   /**
@@ -87,7 +91,7 @@ public:
   /**
    * @brief A list of supported challenges. Only CA side will have m_supportedChallenges.
    */
-  std::vector<std::string> supportedChallenges;
+  std::vector<std::pair<std::string, JsonSection>> supportedChallenges;
   /**
    * @brief CA's certificate. Only Client side will have m_cert.
    */

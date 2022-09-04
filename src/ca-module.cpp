@@ -368,7 +368,7 @@ CaModule::onNewRenewRevoke(const Interest& request, RequestType requestType)
   result.setFreshnessPeriod(DEFAULT_DATA_FRESHNESS_PERIOD);
   result.setContent(requesttlv::encodeDataContent(ecdh.getSelfPubKey(),
                                                   salt, requestState.requestId,
-                                                  m_config.caProfile.supportedChallenges));
+                                                  m_config.caProfile.getSupportedChallengeNames()));
   m_keyChain.sign(result, signingByIdentity(m_config.caProfile.caPrefix));
   m_face.put(result);
   if (m_statusUpdateCallback) {
@@ -423,14 +423,31 @@ CaModule::onChallenge(const Interest& request)
 
   // load the corresponding challenge module
   std::string challengeType = readString(paramTLV.get(tlv::SelectedChallenge));
+
+  auto challengeIt = m_config.caProfile.supportedChallenges.begin();
+  for (; challengeIt != m_config.caProfile.supportedChallenges.end(); ++challengeIt) {
+    if (challengeIt->first == challengeType) {
+      break;
+    }
+  }
+
+  if (challengeIt == m_config.caProfile.supportedChallenges.end()) {
+    NDN_LOG_INFO("Requested challenge " << challengeType << " that is not supported by the CA");
+    m_storage->deleteRequest(requestState->requestId);
+    m_face.put(
+      generateErrorDataPacket(request.getName(), ErrorCode::INVALID_PARAMETER, "Unsupported challenge type."));
+    return;
+  }
+
   auto challenge = ChallengeModule::createChallengeModule(challengeType);
   if (challenge == nullptr) {
-    NDN_LOG_TRACE("Unrecognized challenge type: " << challengeType);
+    NDN_LOG_INFO("Unrecognized challenge type: " << challengeType);
     m_storage->deleteRequest(requestState->requestId);
     m_face.put(
       generateErrorDataPacket(request.getName(), ErrorCode::INVALID_PARAMETER, "Unrecognized challenge type."));
     return;
   }
+  challenge->readConfig(challengeIt->second);
 
   NDN_LOG_TRACE("CHALLENGE module to be load: " << challengeType);
   auto errorInfo = challenge->handleChallengeRequest(paramTLV, *requestState);

@@ -35,6 +35,15 @@ public:
   virtual
   ~ChallengeModule() = default;
 
+  /**
+   * @brief Read any challenge-specific parameters from the configfile
+   * @param configSection config file section
+   *
+   * The base class version does not read any parameters
+   */
+  virtual void
+  readConfig(const JsonSection& configSection);
+
   // For CA
   virtual std::tuple<ErrorCode, std::string>
   handleChallengeRequest(const Block& params, ca::RequestState& request) = 0;

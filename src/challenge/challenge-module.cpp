@@ -33,6 +33,11 @@ ChallengeModule::ChallengeModule(const std::string& challengeType,
 {
 }
 
+void
+ChallengeModule::readConfig(const JsonSection& configSection)
+{
+}
+
 bool
 ChallengeModule::isChallengeSupported(const std::string& challengeType)
 {

@@ -52,7 +52,10 @@ class ChallengePossession : public ChallengeModule
 {
 public:
   explicit
-  ChallengePossession(const std::string& configPath = "");
+  ChallengePossession();
+
+  void
+  readConfig(const JsonSection& config) override;
 
   // For CA
   std::tuple<ErrorCode, std::string>
@@ -71,6 +74,7 @@ public:
                     ndn::KeyChain& keyChain, const Name& issuedCertName,
                     ndn::span<const uint8_t, 16> nonce);
 
+public:
   // challenge parameters
   static const std::string PARAMETER_KEY_CREDENTIAL_CERT;
   static const std::string PARAMETER_KEY_NONCE;
@@ -78,12 +82,7 @@ public:
   static const std::string NEED_PROOF;
 
 private:
-  void
-  parseConfigFile();
-
-private:
   std::function<bool(ndn::security::Certificate)> m_validateCertFunc;
-  std::string m_configFile;
 };
 
 } // namespace ndncert

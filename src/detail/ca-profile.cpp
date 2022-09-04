@@ -27,6 +27,8 @@
 
 namespace ndncert {
 
+NDN_LOG_INIT(ndncert.config);
+
 CaProfile
 CaProfile::fromJson(const JsonSection& json)
 {
@@ -72,7 +74,8 @@ CaProfile::fromJson(const JsonSection& json)
       if (!ChallengeModule::isChallengeSupported(challengeType)) {
         NDN_THROW(std::runtime_error("Challenge " + challengeType + " is not supported."));
       }
-      profile.supportedChallenges.push_back(challengeType);
+      auto options = item.second.get_child(CONFIG_CHALLENGE_OPTIONS, JsonSection());
+      profile.supportedChallenges.emplace_back(challengeType, options);
     }
   }
   // anchor certificate
@@ -108,7 +111,10 @@ CaProfile::toJson() const
     JsonSection challengeListJson;
     for (const auto& challenge : supportedChallenges) {
       JsonSection challengeJson;
-      challengeJson.put(CONFIG_CHALLENGE, challenge);
+      challengeJson.put(CONFIG_CHALLENGE, challenge.first);
+      if (!challenge.second.empty()) {
+        challengeJson.add_child(CONFIG_CHALLENGE_OPTIONS, challenge.second);
+      }
       challengeListJson.push_back({"", challengeJson});
     }
     caItem.add_child("", challengeListJson);
@@ -120,5 +126,16 @@ CaProfile::toJson() const
   }
   return caItem;
 }
+
+std::vector<std::string>
+CaProfile::getSupportedChallengeNames()
+{
+  std::vector<std::string> ret;
+  for (const auto& challenge : supportedChallenges) {
+    ret.emplace_back(std::get<0>(challenge));
+  }
+  return ret;
+}
+
 
 } // namespace ndncert

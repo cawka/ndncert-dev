@@ -29,6 +29,8 @@
 #include <boost/process/child.hpp>
 #include <boost/process/io.hpp>
 
+#include <iostream>
+
 namespace ndncert {
 
 NDN_LOG_INIT(ndncert.challenge.possession);
@@ -39,39 +41,22 @@ const std::string ChallengePossession::PARAMETER_KEY_NONCE = "nonce";
 const std::string ChallengePossession::PARAMETER_KEY_PROOF = "proof";
 const std::string ChallengePossession::NEED_PROOF = "need-proof";
 
-ChallengePossession::ChallengePossession(const std::string& configPath)
+ChallengePossession::ChallengePossession()
   : ChallengeModule("possession", 1, time::seconds(60))
 {
-  if (configPath.empty()) {
-    m_configFile = std::string(NDNCERT_SYSCONFDIR) + "/ndncert/challenge-credential.conf";
-  }
-  else {
-    m_configFile = configPath;
-  }
 }
 
 void
-ChallengePossession::parseConfigFile()
+ChallengePossession::readConfig(const JsonSection& config)
 {
-  JsonSection config;
-  try {
-    boost::property_tree::read_json(m_configFile, config);
-  }
-  catch (const boost::property_tree::file_parser_error& error) {
-    NDN_THROW(std::runtime_error("Failed to parse configuration file " + m_configFile + ": " +
-                                 error.message() + " on line " + std::to_string(error.line())));
-  }
-
-  if (config.begin() == config.end()) {
-    NDN_THROW(std::runtime_error("Error processing configuration file: " + m_configFile + " no data"));
-  }
-
-  auto anchorList = config.get_child("anchor-list", boost::property_tree::ptree());
-  auto certValidatorCmd = config.get_child("cert-validator-cmd", boost::property_tree::ptree());
+  auto anchorList = config.get_child("anchor-list", JsonSection());
+  auto certValidatorCmd = config.get("cert-validator-cmd", ""s);
   size_t countOptions = !anchorList.empty() + !certValidatorCmd.empty();
   if (countOptions > 1) {
     NDN_THROW(std::runtime_error("Only one of `anchor-list` or `cert-validator-cmd` can be present in the config file"));
   }
+
+  boost::property_tree::json_parser::write_json(std::cerr, config);
 
   if (!anchorList.empty()) {
       std::list<Certificate> trustAnchors;
@@ -98,8 +83,7 @@ ChallengePossession::parseConfigFile()
   }
   else if (!certValidatorCmd.empty()) {
     m_validateCertFunc = [certValidatorCmd] (const ndn::security::Certificate& cert) -> bool {
-
-      std::string command = certValidatorCmd.get_value<std::string>();
+      std::string command = certValidatorCmd;
 
       boost::process::opstream in;
       boost::process::ipstream debug;
@@ -126,9 +110,7 @@ std::tuple<ErrorCode, std::string>
 ChallengePossession::handleChallengeRequest(const Block& params, ca::RequestState& request)
 {
   params.parse();
-  if (!m_validateCertFunc) {
-    parseConfigFile();
-  }
+  BOOST_ASSERT(m_validateCertFunc);
 
   Certificate credential;
   const uint8_t* signature = nullptr;
