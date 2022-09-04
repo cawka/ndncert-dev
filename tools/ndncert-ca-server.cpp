@@ -159,7 +159,15 @@ main(int argc, char* argv[])
         });
   }
 
-  face.processEvents();
+  try {
+    face.processEvents();
+  }
+  catch (const std::exception& e) {
+    std::cerr << "FATAL ERROR: " << e.what() << std::endl;
+    std::cerr << boost::diagnostic_information(e) << std::endl;
+    return 1;
+  }
+
   return 0;
 }
 

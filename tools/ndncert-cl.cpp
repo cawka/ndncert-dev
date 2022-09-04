@@ -18,6 +18,7 @@
  * See AUTHORS.md for complete list of ndncert authors and contributors.
  */
 
+#include "challenge/challenge-possession.hpp"
 #include "requester-request.hpp"
 
 #include <ndn-cxx/face.hpp>
@@ -247,6 +248,7 @@ private:
             auto idName = ndn::security::extractIdentityFromCertName(certName);
             auto keyName = ndn::security::extractKeyNameFromCertName(certName);
             Certificate cert = m_keyChain.getPib().getIdentity(idName).getKey(keyName).getCertificate(certName);
+            m_requesterState->m_miscState.emplace("cert-name", ndn::Name(certName));
 
             std::get<1>(*keyIt) = std::string(reinterpret_cast<const char*>(cert.wireEncode().data()), cert.wireEncode().size());
           }
@@ -254,6 +256,29 @@ private:
             std::get<1>(*keyIt) = *valueIt;
           }
         }
+      }
+      else if (m_requesterState->m_status == Status::CHALLENGE) {
+        if (challengeType == "possession") {
+          auto proofIt = requirements.find("proof");
+          if (proofIt == requirements.end()) {
+            NDN_THROW(std::runtime_error("Possession challenge is expected to have `proof` requirement, but it is missing"));
+          }
+
+          auto certIt = m_requesterState->m_miscState.find("cert-name");
+          if (certIt == m_requesterState->m_miscState.end()) {
+            NDN_THROW(std::runtime_error("Missing `cert-name` in the requester state"));
+          }
+
+          auto certName = boost::any_cast<ndn::Name>(certIt->second);
+          auto keyName = ndn::security::extractKeyNameFromCertName(certName);
+          auto signature = m_keyChain.getTpm().sign({m_requesterState->m_nonce},
+                                                    keyName,
+                                                    ndn::DigestAlgorithm::SHA256);
+          proofIt->second = std::string(signature->get<char>(), signature->size());
+        }
+        //
+        // for other challenges, will do some capture
+        //
       }
     }
 

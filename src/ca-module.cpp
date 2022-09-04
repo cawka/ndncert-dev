@@ -84,27 +84,67 @@ CaModule::registerPrefix()
       // register INFO RDR metadata prefix
       const auto& metaDataComp = ndn::MetadataObject::getKeywordComponent();
       auto filterId = m_face.setInterestFilter(Name(name).append("INFO").append(metaDataComp),
-                                               [this] (auto&&, const auto& i) { onCaProfileDiscovery(i); });
+                                               [this] (auto&&, const auto& i) {
+        try {
+          onCaProfileDiscovery(i);
+        }
+        catch (const std::exception& e) {
+          NDN_LOG_DEBUG("Failure while processing onCaProfileDiscovery");
+          NDN_LOG_TRACE(boost::diagnostic_information(e));
+        }
+      });
       m_interestFilterHandles.push_back(filterId);
 
       // register PROBE prefix
       filterId = m_face.setInterestFilter(Name(name).append("PROBE"),
-                                          [this] (auto&&, const auto& i) { onProbe(i); });
+                                          [this] (auto&&, const auto& i) {
+        try {
+          onProbe(i);
+        }
+        catch (const std::exception& e) {
+          NDN_LOG_DEBUG("Failure while processing onProbe");
+          NDN_LOG_TRACE(boost::diagnostic_information(e));
+        }
+      });
       m_interestFilterHandles.push_back(filterId);
 
       // register NEW prefix
       filterId = m_face.setInterestFilter(Name(name).append("NEW"),
-                                          [this] (auto&&, const auto& i) { onNewRenewRevoke(i, RequestType::NEW); });
+                                          [this] (auto&&, const auto& i) {
+        try {
+          onNewRenewRevoke(i, RequestType::NEW);
+        }
+        catch (const std::exception& e) {
+          NDN_LOG_DEBUG("Failure while processing onNewRenewRevoke");
+          NDN_LOG_TRACE(boost::diagnostic_information(e));
+        }
+      });
       m_interestFilterHandles.push_back(filterId);
 
       // register SELECT prefix
       filterId = m_face.setInterestFilter(Name(name).append("CHALLENGE"),
-                                          [this] (auto&&, const auto& i) { onChallenge(i); });
+                                          [this] (auto&&, const auto& i) {
+        try {
+          onChallenge(i);
+        }
+        catch (const std::exception& e) {
+          NDN_LOG_DEBUG("Failure while processing onChallenge");
+          NDN_LOG_TRACE(boost::diagnostic_information(e));
+        }
+      });
       m_interestFilterHandles.push_back(filterId);
 
       // register REVOKE prefix
       filterId = m_face.setInterestFilter(Name(name).append("REVOKE"),
-                                          [this] (auto&&, const auto& i) { onNewRenewRevoke(i, RequestType::REVOKE); });
+                                          [this] (auto&&, const auto& i) {
+        try {
+          onNewRenewRevoke(i, RequestType::REVOKE);
+        }
+        catch (const std::exception& e) {
+          NDN_LOG_DEBUG("Failure while processing onNewRenewRevoke");
+          NDN_LOG_TRACE(boost::diagnostic_information(e));
+        }
+      });
       m_interestFilterHandles.push_back(filterId);
 
       NDN_LOG_TRACE("Prefix " << name << " got registered");

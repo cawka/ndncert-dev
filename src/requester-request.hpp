@@ -264,6 +264,11 @@ public:
    */
   std::array<uint8_t, 16> m_nonce = {};
 
+  /**
+   * @brief Any state parameters that may be need to be stored by the requester
+   */
+  std::map<std::string, boost::any> m_miscState;
+
 private:
   /**
    * @brief The local keychain to generate and install identities, keys and certificates

@@ -98,6 +98,8 @@ ChallengePossession::readConfig(const JsonSection& config)
       }
 
       child.wait();
+
+      NDN_LOG_TRACE("  exit code " << child.exit_code());
       return child.exit_code() == 0;
     };
   } else {
@@ -109,73 +111,82 @@ ChallengePossession::readConfig(const JsonSection& config)
 std::tuple<ErrorCode, std::string>
 ChallengePossession::handleChallengeRequest(const Block& params, ca::RequestState& request)
 {
-  params.parse();
   BOOST_ASSERT(m_validateCertFunc);
 
-  Certificate credential;
-  const uint8_t* signature = nullptr;
-  size_t signatureLen = 0;
-  const auto& elements = params.elements();
-  for (size_t i = 0; i < elements.size() - 1; i++) {
-    if (elements[i].type() == tlv::ParameterKey && elements[i + 1].type() == tlv::ParameterValue) {
-      if (readString(elements[i]) == PARAMETER_KEY_CREDENTIAL_CERT) {
-        try {
-          credential.wireDecode(elements[i + 1].blockFromValue());
+  try {
+    params.parse();
+
+    Certificate credential;
+    const uint8_t* signature = nullptr;
+    size_t signatureLen = 0;
+    const auto& elements = params.elements();
+    for (size_t i = 0; i < elements.size() - 1; i++) {
+      if (elements[i].type() == tlv::ParameterKey && elements[i + 1].type() == tlv::ParameterValue) {
+        if (readString(elements[i]) == PARAMETER_KEY_CREDENTIAL_CERT) {
+          try {
+            credential.wireDecode(elements[i + 1].blockFromValue());
+          }
+          catch (const std::exception& e) {
+            NDN_LOG_ERROR("Cannot load challenge parameter: credential " << e.what());
+            return returnWithError(request, ErrorCode::INVALID_PARAMETER,
+                                   "Cannot challenge credential: credential."s + e.what());
+          }
         }
-        catch (const std::exception& e) {
-          NDN_LOG_ERROR("Cannot load challenge parameter: credential " << e.what());
-          return returnWithError(request, ErrorCode::INVALID_PARAMETER,
-                                 "Cannot challenge credential: credential."s + e.what());
+        else if (readString(elements[i]) == PARAMETER_KEY_PROOF) {
+          signature = elements[i + 1].value();
+          signatureLen = elements[i + 1].value_size();
         }
       }
-      else if (readString(elements[i]) == PARAMETER_KEY_PROOF) {
-        signature = elements[i + 1].value();
-        signatureLen = elements[i + 1].value_size();
+    }
+
+    // verify the credential and the self-signed cert
+    if (request.status == Status::BEFORE_CHALLENGE) {
+      NDN_LOG_TRACE("Challenge Interest arrives. Check certificate and init the challenge");
+      using ndn::toHex;
+
+      // check the certificate
+      if (!credential.hasContent() || signatureLen != 0) {
+        return returnWithError(request, ErrorCode::BAD_INTEREST_FORMAT, "Cannot find certificate");
       }
+      if (!m_validateCertFunc(credential)) {
+        return returnWithError(request, ErrorCode::INVALID_PARAMETER, "Certificate cannot be verified");
+      }
+
+      // for the first time, init the challenge
+      std::array<uint8_t, 16> secretCode{};
+      ndn::random::generateSecureBytes(secretCode);
+      JsonSection secretJson;
+      secretJson.add(PARAMETER_KEY_NONCE, toHex(secretCode));
+      const auto& credBlock = credential.wireEncode();
+      secretJson.add(PARAMETER_KEY_CREDENTIAL_CERT, toHex({credBlock.wire(), credBlock.size()}));
+      NDN_LOG_TRACE("Secret for request " << toHex(request.requestId) << " : " << toHex(secretCode));
+      return returnWithNewChallengeStatus(request, NEED_PROOF, std::move(secretJson), m_maxAttemptTimes, m_secretLifetime);
+    }
+    else if (request.challengeState && request.challengeState->challengeStatus == NEED_PROOF) {
+      NDN_LOG_TRACE("Challenge Interest (proof) arrives. Check the proof");
+      //check the format and load credential
+      if (credential.hasContent() || signatureLen == 0) {
+        return returnWithError(request, ErrorCode::BAD_INTEREST_FORMAT, "Cannot find certificate");
+      }
+      credential = Certificate(Block(ndn::fromHex(request.challengeState->secrets.get(PARAMETER_KEY_CREDENTIAL_CERT, ""))));
+      auto secretCode = *ndn::fromHex(request.challengeState->secrets.get(PARAMETER_KEY_NONCE, ""));
+
+      //check the proof
+      ndn::security::transform::PublicKey key;
+      key.loadPkcs8(credential.getPublicKey());
+      if (ndn::security::verifySignature({secretCode}, {signature, signatureLen}, key)) {
+        return returnWithSuccess(request);
+      }
+      return returnWithError(request, ErrorCode::INVALID_PARAMETER,
+                             "Cannot verify the proof of private key against credential.");
     }
   }
-
-  // verify the credential and the self-signed cert
-  if (request.status == Status::BEFORE_CHALLENGE) {
-    NDN_LOG_TRACE("Challenge Interest arrives. Check certificate and init the challenge");
-    using ndn::toHex;
-
-    // check the certificate
-    if (!credential.hasContent() || signatureLen != 0) {
-      return returnWithError(request, ErrorCode::BAD_INTEREST_FORMAT, "Cannot find certificate");
-    }
-    if (!m_validateCertFunc(credential)) {
-      return returnWithError(request, ErrorCode::INVALID_PARAMETER, "Certificate cannot be verified");
-    }
-
-    // for the first time, init the challenge
-    std::array<uint8_t, 16> secretCode{};
-    ndn::random::generateSecureBytes(secretCode);
-    JsonSection secretJson;
-    secretJson.add(PARAMETER_KEY_NONCE, toHex(secretCode));
-    const auto& credBlock = credential.wireEncode();
-    secretJson.add(PARAMETER_KEY_CREDENTIAL_CERT, toHex({credBlock.wire(), credBlock.size()}));
-    NDN_LOG_TRACE("Secret for request " << toHex(request.requestId) << " : " << toHex(secretCode));
-    return returnWithNewChallengeStatus(request, NEED_PROOF, std::move(secretJson), m_maxAttemptTimes, m_secretLifetime);
+  catch (const std::exception& e) {
+    // The server must not fail while processing exceptions!!!
+    NDN_LOG_INFO("Error while processing challenge: " << boost::diagnostic_information(e));
+    return returnWithError(request, ErrorCode::INVALID_PARAMETER, "Fail to recognize the request (unknown error)");
   }
-  else if (request.challengeState && request.challengeState->challengeStatus == NEED_PROOF) {
-    NDN_LOG_TRACE("Challenge Interest (proof) arrives. Check the proof");
-    //check the format and load credential
-    if (credential.hasContent() || signatureLen == 0) {
-      return returnWithError(request, ErrorCode::BAD_INTEREST_FORMAT, "Cannot find certificate");
-    }
-    credential = Certificate(Block(ndn::fromHex(request.challengeState->secrets.get(PARAMETER_KEY_CREDENTIAL_CERT, ""))));
-    auto secretCode = *ndn::fromHex(request.challengeState->secrets.get(PARAMETER_KEY_NONCE, ""));
 
-    //check the proof
-    ndn::security::transform::PublicKey key;
-    key.loadPkcs8(credential.getPublicKey());
-    if (ndn::security::verifySignature({secretCode}, {signature, signatureLen}, key)) {
-      return returnWithSuccess(request);
-    }
-    return returnWithError(request, ErrorCode::INVALID_PARAMETER,
-                           "Cannot verify the proof of private key against credential.");
-  }
   NDN_LOG_TRACE("Proof of possession: bad state");
   return returnWithError(request, ErrorCode::INVALID_PARAMETER, "Fail to recognize the request.");
 }
@@ -232,6 +243,7 @@ ChallengePossession::genChallengeRequestTLV(Status status, const std::string& ch
     if (params.size() != 1) {
       NDN_THROW(std::runtime_error("Wrong parameter provided."));
     }
+    request.push_back(ndn::makeStringBlock(tlv::SelectedChallenge, CHALLENGE_TYPE));
     for (const auto& item : params) {
       if (std::get<0>(item) == PARAMETER_KEY_PROOF) {
         request.push_back(ndn::makeStringBlock(tlv::ParameterKey, PARAMETER_KEY_PROOF));
